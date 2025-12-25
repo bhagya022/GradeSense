@@ -5,7 +5,7 @@ import pytesseract
 import re
 
 # ---------------- CONFIG ----------------
-pytesseract.pytesseract.tesseract_cmd = r"C:\Users\Hp\OneDrive\Desktop\Tesseract-OCR\tesseract.exe"
+#pytesseract.pytesseract.tesseract_cmd = r"C:\Users\Hp\OneDrive\Desktop\Tesseract-OCR\tesseract.exe"
 st.set_page_config(page_title="GradeSense", layout="centered")
 
 st.title("GradeSense")
@@ -203,5 +203,6 @@ elif st.session_state.step == 4:
 
     if st.button("🔄 Start Over"):
         st.session_state.step = 1
+
 
 
