@@ -5,14 +5,25 @@ import pytesseract
 import re
 
 # ---------------- CONFIG ----------------
-#pytesseract.pytesseract.tesseract_cmd = r"C:\Users\Hp\OneDrive\Desktop\Tesseract-OCR\tesseract.exe"
-st.set_page_config(page_title="GradeSense", layout="centered")
-
-st.title("GradeSense")
+st.set_page_config(page_title="What's your CGPA?", layout="centered")
+st.title("What's your CGPA?")
 
 # ---------------- CONSTANTS ----------------
-GRADE_POINTS = {"A+": 10, "A": 9, "B": 8, "C": 7, "D": 6}
-GRADE_TO_MARK = {"A+": "60+", "A": "55+", "B": "50+", "C": "45+", "D": "40+"}
+GRADE_POINTS = {
+    "S": 10,
+    "A": 9,
+    "B": 8,
+    "C": 7,
+    "D": 6
+}
+
+GRADE_TO_MARK = {
+    "S": "65+",
+    "A": "55+",
+    "B": "50+",
+    "C": "45+",
+    "D": "40+"
+}
 
 # ---------------- SESSION STATE ----------------
 if "step" not in st.session_state:
@@ -25,16 +36,21 @@ if "confirmed" not in st.session_state:
     st.session_state.confirmed = False
 
 # ---------------- HELPERS ----------------
-def internal_gp(internal):
-    return (internal / 30) * 10
-
-def verdict_text(target):
-    if target >= 9.5:
-        return "⚠️ Very difficult — requires almost all A+"
-    elif target >= 9.0:
-        return "✅ Achievable with strong performance in theory subjects"
+def verdict_text(required_avg):
+    if required_avg > 9.5:
+        return "⚠️ Extremely difficult — near-perfect grades required"
+    elif required_avg > 9.0:
+        return "⚠️ Difficult but achievable with focus"
+    elif required_avg > 8.0:
+        return "✅ Comfortable with consistent effort"
     else:
-        return "✅ Comfortably achievable"
+        return "🟢 Very safe target"
+
+def grade_from_points(avg):
+    for g, p in GRADE_POINTS.items():
+        if avg >= p:
+            return g
+    return "D"
 
 # ---------------- STEP 1: OCR ----------------
 if st.session_state.step == 1:
@@ -77,16 +93,14 @@ if st.session_state.step == 1:
 # ---------------- STEP 2: EDIT SUBJECTS ----------------
 elif st.session_state.step == 2:
     st.header("Step 2️⃣ Edit & Confirm Subjects")
-    st.caption("Edit freely. Click **Confirm** to save. Click **Proceed** when done.")
 
-    with st.form("edit_subjects_form"):
+    with st.form("edit_form"):
         edited_df = st.data_editor(
             st.session_state.df,
             num_rows="dynamic",
             use_container_width=True,
             column_config={
                 "Type": st.column_config.SelectboxColumn(
-                    "Type",
                     options=["Theory", "Lab", "Internship", "Project"]
                 )
             }
@@ -95,114 +109,105 @@ elif st.session_state.step == 2:
         edited_df = edited_df.dropna(subset=["Subject"]).reset_index(drop=True)
         edited_df["S.No"] = range(1, len(edited_df) + 1)
 
-        total_subjects = len(edited_df)
-        total_credits = int(edited_df["Credit"].sum())
-        theory_cnt = int((edited_df["Type"] == "Theory").sum())
-        labs_other_cnt = total_subjects - theory_cnt
-
         st.info(
-            f"""
-            **Subjects:** {total_subjects}  
-            **Total Credits:** {total_credits}  
-            **Theory:** {theory_cnt}  
-            **Labs / Other:** {labs_other_cnt}
-            """
+            f"**Total Credits:** {edited_df['Credit'].sum()}  |  "
+            f"**Subjects:** {len(edited_df)}"
         )
 
-        col1, col2, col3 = st.columns(3)
-        back = col1.form_submit_button("⬅️ Back")
-        confirm = col2.form_submit_button("💾 Confirm")
-        proceed = col3.form_submit_button("➡️ Proceed")
+        back, confirm, proceed = st.columns(3)
+        if back.form_submit_button("⬅️ Back"):
+            st.session_state.step = 1
 
-    if back:
-        st.session_state.step = 1
+        if confirm.form_submit_button("💾 Confirm"):
+            st.session_state.df = edited_df
+            st.session_state.confirmed = True
+            st.success("Confirmed!")
 
-    if confirm:
-        st.session_state.df = edited_df
-        st.session_state.confirmed = True
-        st.success("Changes confirmed. You can proceed or continue editing.")
-
-    if proceed:
-        if not st.session_state.confirmed:
-            st.warning("Please confirm your changes before proceeding.")
-        else:
-            st.session_state.step = 3
+        if proceed.form_submit_button("➡️ Proceed"):
+            if st.session_state.confirmed:
+                st.session_state.step = 3
+            else:
+                st.warning("Confirm before proceeding")
 
 # ---------------- STEP 3: INPUTS ----------------
 elif st.session_state.step == 3:
     st.header("Step 3️⃣ Enter Known Information")
 
     df = st.session_state.df
-    internals = {}
-    non_theory = {}
+    known_grades = {}
 
     for idx, row in df.iterrows():
-        if row["Type"] == "Theory":
-            internals[row["Subject"]] = st.number_input(
-                f"{row['Subject']} – Internal (out of 30)",
-                0, 30, 20, 1,
-                key=f"int_{idx}"
-            )
-        else:
-            non_theory[row["Subject"]] = st.selectbox(
+        if row["Type"] != "Theory":
+            known_grades[row["Subject"]] = st.selectbox(
                 f"{row['Subject']} – Expected Grade",
                 list(GRADE_POINTS.keys()),
                 index=1,
-                key=f"grade_{idx}"
+                key=f"g_{idx}"
             )
 
-    target = st.number_input(
-        "Target CGPA",
-        min_value=0.0, max_value=10.0, step=0.1
-    )
+    target = st.number_input("🎯 Target CGPA", 0.0, 10.0, 9.0, 0.1)
 
-    col1, col2 = st.columns(2)
-    if col1.button("⬅️ Back"):
-        st.session_state.step = 2
-    if col2.button("Analyze & Get Strategy 🎯", type="primary"):
-        st.session_state.inputs = (internals, non_theory, target)
+    if st.button("Analyze 🎯", type="primary"):
+        st.session_state.inputs = (known_grades, target)
         st.session_state.step = 4
 
-# ---------------- STEP 4: FINAL ANALYSIS ----------------
+# ---------------- STEP 4: POINTS-BASED ANALYSIS ----------------
 elif st.session_state.step == 4:
     df = st.session_state.df
-    internals, non_theory, target = st.session_state.inputs
+    known_grades, target = st.session_state.inputs
 
-    st.header("🎯 CGPA Strategy Analysis")
-    st.subheader("Quick Verdict")
-    st.success(verdict_text(target))
+    total_credits = df["Credit"].sum()
+    target_points = target * total_credits
 
-    st.markdown("## 📌 Option A — Simple Advisor")
-    st.write(
-        "- **3-credit theory subjects** → mostly **A+**\n"
-        "- One 3-credit subject can drop to **A**\n"
-        "- Labs / Internship → **A is enough**"
-    )
+    earned_points = 0
+    earned_credits = 0
 
-    st.markdown("## 📊 Option B — Sample Subject-wise Plan")
+    for _, row in df.iterrows():
+        if row["Subject"] in known_grades:
+            gp = GRADE_POINTS[known_grades[row["Subject"]]]
+            earned_points += gp * row["Credit"]
+            earned_credits += row["Credit"]
+
+    remaining_credits = total_credits - earned_credits
+    remaining_points = target_points - earned_points
+    required_avg = remaining_points / remaining_credits if remaining_credits else 0
+
+    st.header("🎯 CGPA Strategy (Points-Based)")
+    st.success(verdict_text(required_avg))
+
+    st.metric("Target Points", round(target_points, 2))
+    st.metric("Earned Points", round(earned_points, 2))
+    st.metric("Remaining Avg Grade", round(required_avg, 2))
+
+    st.markdown("## 📊 Subject-wise Minimum Grade Needed")
+
     plan = []
     for _, row in df.iterrows():
-        if row["Type"] == "Theory":
-            grade = "A+" if row["Credit"] >= 3 else "A"
-            plan.append([row["Subject"], row["Credit"], grade, GRADE_TO_MARK[grade]])
+        if row["Subject"] in known_grades:
+            g = known_grades[row["Subject"]]
         else:
-            plan.append([row["Subject"], row["Credit"], "A", "—"])
+            g = grade_from_points(required_avg)
+
+        plan.append([
+            row["Subject"],
+            row["Credit"],
+            g,
+            GRADE_POINTS[g],
+            GRADE_TO_MARK[g]
+        ])
 
     st.dataframe(
-        pd.DataFrame(plan, columns=["Subject", "Credits", "Suggested Grade", "Approx End-Sem Target"]),
+        pd.DataFrame(
+            plan,
+            columns=["Subject", "Credits", "Suggested Grade", "Grade Points", "Approx End-Sem Marks"]
+        ),
         use_container_width=True
     )
 
-    st.markdown("## 🧠 Option C — Strategy Comparison")
-    st.write("🟢 Safe: All 3-credit → A+")
-    st.write("🟡 Balanced: 2 × A+ + 1 × A")
-    st.write("🔴 Risky: 1 × A+ + labs must be A+")
-
-    st.markdown("### 🎓 Grade → Marks Guide")
-    st.table(pd.DataFrame(GRADE_TO_MARK.items(), columns=["Grade", "End-Sem Target"]))
-
     if st.button("🔄 Start Over"):
         st.session_state.step = 1
+
+
 
 
 
